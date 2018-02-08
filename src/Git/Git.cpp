@@ -280,12 +280,18 @@ static bool IsPowerShell(CString cmd)
 
 int CGit::RunAsync(CString cmd, PROCESS_INFORMATION* piOut, HANDLE* hReadOut, HANDLE* hErrReadOut, const CString* StdioFile)
 {
-	CAutoGeneralHandle hRead, hWrite, hReadErr, hWriteErr;
+	CAutoGeneralHandle hRead, hWrite, hReadErr, hWriteErr, hWriteIn, hReadIn;
 	CAutoFile hStdioFile;
 
 	SECURITY_ATTRIBUTES sa = { 0 };
 	sa.nLength = sizeof(SECURITY_ATTRIBUTES);
 	sa.bInheritHandle=TRUE;
+	if (!CreatePipe(hReadIn.GetPointer(), hWriteIn.GetPointer(), &sa, 0))
+	{
+		CString err = CFormatMessageWrapper();
+		CTraceToOutputDebugString::Instance()(_T(__FUNCTION__) L": could not open stdin pipe: %s\n", (LPCTSTR)err.Trim());
+		return TGIT_GIT_ERROR_OPEN_PIP;
+	}
 	if (!CreatePipe(hRead.GetPointer(), hWrite.GetPointer(), &sa, 0))
 	{
 		CString err = CFormatMessageWrapper();
@@ -326,10 +332,10 @@ int CGit::RunAsync(CString cmd, PROCESS_INFORMATION* piOut, HANDLE* hReadOut, HA
 	// CREATE_NEW_CONSOLE makes git (but not ssh.exe, see issue #2257) recognize that it has no console in order to launch askpass to ask for the password,
 	// DETACHED_PROCESS which was originally used here has the same effect (but works with git.exe AND ssh.exe), however, it prevents PowerShell from working (cf. issue #2143)
 	// => we keep using DETACHED_PROCESS as the default, but if cmd contains pwershell we use CREATE_NEW_CONSOLE
-	if (IsPowerShell(cmd))
+	/*if (IsPowerShell(cmd))*/
 		dwFlags |= CREATE_NEW_CONSOLE;
-	else
-		dwFlags |= DETACHED_PROCESS;
+	/*else
+		dwFlags |= DETACHED_PROCESS;*/
 
 	memset(&this->m_CurrentGitPi,0,sizeof(PROCESS_INFORMATION));
 
@@ -355,6 +361,8 @@ int CGit::RunAsync(CString cmd, PROCESS_INFORMATION* piOut, HANDLE* hReadOut, HA
 			cmd = L'"' + CGit::ms_LastMsysGitDir + L'\\' + cmd + L'"';
 	}
 
+	si.hStdInput = hReadIn;
+
 	CTraceToOutputDebugString::Instance()(_T(__FUNCTION__) L": executing %s\n", (LPCTSTR)cmd);
 	if(!CreateProcess(nullptr, cmd.GetBuffer(), nullptr, nullptr, TRUE, dwFlags, pEnv, m_CurrentDir.GetBuffer(), &si, &pi))
 	{
@@ -362,6 +370,8 @@ int CGit::RunAsync(CString cmd, PROCESS_INFORMATION* piOut, HANDLE* hReadOut, HA
 		CTraceToOutputDebugString::Instance()(_T(__FUNCTION__) L": error while executing command: %s\n", (LPCTSTR)err.Trim());
 		return TGIT_GIT_ERROR_CREATE_PROCESS;
 	}
+
+	hReadIn.CloseHandle();
 
 	m_CurrentGitPi = pi;
 
